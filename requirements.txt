@@ -1,0 +1,6 @@
+circuits
+pySerial
+socketio
+eventlet
+flask
+git+https://github.com/alduxvm/pyMultiWii.git

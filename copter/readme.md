@@ -1,0 +1,1 @@
+Compile directory multiwii_firmware
