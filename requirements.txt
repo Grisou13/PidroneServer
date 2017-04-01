@@ -4,3 +4,4 @@ socketio
 eventlet
 flask
 git+https://github.com/alduxvm/pyMultiWii.git
+socketIO-client-2

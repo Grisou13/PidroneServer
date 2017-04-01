@@ -1,40 +1,17 @@
-#socketio imports
-import socketio
-import eventlet
-import eventlet.wsgi
-from flask import Flask, render_template
-from pyMultuiWii import MultiWii
+class CameraManager(Manager):
+    """docstring for CameraManager."""
+    def __init__(self, arg):
+        super(CameraManager, self).__init__()
+        self.arg = arg
+    def start():
+        pass
 
-#picamera imports
 import io
 import picamera
 import logging
 import socketserver
 from threading import Condition
 from http import server
-
-#misc
-from sys import stdout
-from multiprocessing import Process, Manager
-from multiprocessing.managers import BaseManager
-import time
-
-# register classes for sharing between processes
-# toherwise stuff may go south...
-BaseManager.register('SocketioServer', socketio.Server)
-BaseManager.register("MultiWii", MultiWii)
-manager = BaseManager()
-manager.start()
-
-sio = manager.SocketioServer()
-board = manager.MultiWii("/dev/ttyUSB0")
-
-drone_config = board.getData(board.MISC)
-
-print("Drone config : ")
-print("==================")
-print(drone_config)
-
 
 PAGE="""\
 <html>
@@ -109,7 +86,7 @@ class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
     daemon_threads = True
 
 
-def start_camera_server():
+def run():
     with picamera.PiCamera(resolution='640x480', framerate=24) as camera:
         output = StreamingOutput()
         camera.start_recording(output, format='mjpeg')
@@ -119,72 +96,3 @@ def start_camera_server():
             server.serve_forever()
         finally:
             camera.stop_recording()
-
-app = Flask(__name__)
-
-camera_handle = None
-board_handle = None
-
-board_history = []
-
-@app.route('/')
-def index():
-    """Serve the client-side application."""
-    return render_template('index.html')
-# TODO: rename this
-def f(board, sio):
-    board.getData(MultiWii.ATTITUDE)
-    sio.emit(board.attitude)
-    time.sleep(1) # just wait a bit, don't overload everything
-# when a client connects we want to:
-# - start the multiwii
-# - arm it
-# - create a process to periodically retrive it's status and stuff
-@sio.on('connect', namespace='/')
-def connect(sid, environ):
-    if board_handle is None:
-        # first actually arm the board
-        board.arm()
-        board_handle = Process(target=f,args=(board, sio))
-        board_handle.start()
-@sio.on('disconnect', namespace='/')
-def disconnect(sid):
-    print('disconnect ', sid)
-
-#################################
-# drone stuff
-###############################
-#allow the clients to manually ask for data
-@sio.on("info", namespace="/drone")
-def m_(*a, **kw):
-    f(board, sio)
-
-@sio.on("set_direction", namespace = "/drone")
-def set_speed(sid, data):
-
-####################################################
-# Camera stuff
-################################################
-# we have a special event for camera management, becuase we don't want
-# to start it if there is no need
-
-@sio.on('start', namespace='/camera')
-def message(sid, data):
-    camera_handle = Process(target=start_camera_server,args=()) #handle camera stuff
-    camera_handle.start()
-    sio.emit('started', room=sid)
-
-@sio.on("start", namespace = "/camera")
-def m_(sid, data):
-    if camera_handle is not None:
-        camera_handle.join() # if this doesn't work, we're f*cked
-        sio.emit("stopped", room=sid)
-
-
-
-if __name__ == '__main__':
-
-    # wrap Flask application with engineio's middleware
-    app = socketio.Middleware(sio, app)
-
-    eventlet.wsgi.server(eventlet.listen(('', 8000)), app)

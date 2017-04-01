@@ -343,5 +343,3 @@ class MultiWii:
                 return "No return error!"
         except Exception as error:
             print(error)
-Contact GitHub API Training Shop Blog About
-© 2017 GitHub, Inc. Terms Privacy Security Status Help
