@@ -6,25 +6,20 @@ from flask import Flask, render_template
 from pyMultuiWii import MultiWii
 
 #picamera imports
-import io
-import picamera
-import logging
-import socketserver
-from threading import Condition
-from http import server
-
+from .camera import start_camera_server
 #misc
 from sys import stdout
 from multiprocessing import Process, Manager
 from multiprocessing.managers import BaseManager
 import time
-
+from .helpers import *
+#from flight_controller import FlightController
 # register classes for sharing between processes
 # toherwise stuff may go south...
-BaseManager.register('SocketioServer', socketio.Server)
-BaseManager.register("MultiWii", MultiWii)
-manager = BaseManager()
-manager.start()
+# BaseManager.register('SocketioServer', socketio.Server)
+# BaseManager.register("MultiWii", MultiWii)
+# manager = BaseManager()
+# manager.start()
 
 sio = manager.SocketioServer()
 board = manager.MultiWii("/dev/ttyUSB0")
@@ -34,91 +29,7 @@ drone_config = board.getData(board.MISC)
 print("Drone config : ")
 print("==================")
 print(drone_config)
-
-
-PAGE="""\
-<html>
-<head>
-<title>picamera MJPEG streaming demo</title>
-</head>
-<body>
-<h1>PiCamera MJPEG Streaming Demo</h1>
-<img src="stream.mjpg" width="640" height="480" />
-</body>
-</html>
-"""
-
-class StreamingOutput(object):
-    def __init__(self):
-        self.frame = None
-        self.buffer = io.BytesIO()
-        self.condition = Condition()
-
-    def write(self, buf):
-        if buf.startswith(b'\xff\xd8'):
-            # New frame, copy the existing buffer's content and notify all
-            # clients it's available
-            self.buffer.truncate()
-            with self.condition:
-                self.frame = self.buffer.getvalue()
-                self.condition.notify_all()
-            self.buffer.seek(0)
-        return self.buffer.write(buf)
-
-class StreamingHandler(server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/':
-            self.send_response(301)
-            self.send_header('Location', '/index.html')
-            self.end_headers()
-        elif self.path == '/index.html':
-            content = PAGE.encode('utf-8')
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html')
-            self.send_header('Content-Length', len(content))
-            self.end_headers()
-            self.wfile.write(content)
-        elif self.path == '/stream.mjpg':
-            self.send_response(200)
-            self.send_header('Age', 0)
-            self.send_header('Cache-Control', 'no-cache, private')
-            self.send_header('Pragma', 'no-cache')
-            self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
-            self.end_headers()
-            try:
-                while True:
-                    with output.condition:
-                        output.condition.wait()
-                        frame = output.frame
-                    self.wfile.write(b'--FRAME\r\n')
-                    self.send_header('Content-Type', 'image/jpeg')
-                    self.send_header('Content-Length', len(frame))
-                    self.end_headers()
-                    self.wfile.write(frame)
-                    self.wfile.write(b'\r\n')
-            except Exception as e:
-                logging.warning(
-                    'Removed streaming client %s: %s',
-                    self.client_address, str(e))
-        else:
-            self.send_error(404)
-            self.end_headers()
-
-class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-
-
-def start_camera_server():
-    with picamera.PiCamera(resolution='640x480', framerate=24) as camera:
-        output = StreamingOutput()
-        camera.start_recording(output, format='mjpeg')
-        try:
-            address = ('', 6060)
-            server = StreamingServer(address, StreamingHandler)
-            server.serve_forever()
-        finally:
-            camera.stop_recording()
+print(board.getData(board.IDENT))
 
 app = Flask(__name__)
 
@@ -127,26 +38,41 @@ board_handle = None
 
 board_history = []
 
+#store the last rc channel commands
+last_rc = board.rcChannels
+
+##################################
+# Background processes
+# theses will be launched when the "start" command is emitted
+#################################
+def update_drone_info(board):
+    while True:
+        sio.emit("info", data = board.getData(board.ATTITUDE), namespace="/drone")
+        sio.sleep(.5)
+
+def update_rc_command(board, last_rc):
+    while True:
+        sendRc(last_rc)
+        sio.emit("rc_raw_data", data = board.rcChannels, namespace="/drone")
+        sio.emit("info", data = board.getData(board.ATTITUDE), namespace="/drone")
+        time.sleep(.5)
+
+###############################
+# Flask routes
+#############################
 @app.route('/')
 def index():
     """Serve the client-side application."""
     return render_template('index.html')
-# TODO: rename this
-def f(board, sio):
-    board.getData(MultiWii.ATTITUDE)
-    sio.emit(board.attitude)
-    time.sleep(1) # just wait a bit, don't overload everything
-# when a client connects we want to:
-# - start the multiwii
-# - arm it
-# - create a process to periodically retrive it's status and stuff
+
+#############################
+# Socket bootstraping
+############################
+
 @sio.on('connect', namespace='/')
 def connect(sid, environ):
-    if board_handle is None:
-        # first actually arm the board
-        board.arm()
-        board_handle = Process(target=f,args=(board, sio))
-        board_handle.start()
+    print("connected: ",sid)
+
 @sio.on('disconnect', namespace='/')
 def disconnect(sid):
     print('disconnect ', sid)
@@ -159,8 +85,52 @@ def disconnect(sid):
 def m_(*a, **kw):
     f(board, sio)
 
+@sio.on("start", namespace="/drone")
+def m_(*arg,**kwars):
+    board.arm()
+    time.sleep(2)
+    thread = sio.start_background_task(update_drone_info, args = (board))
+    thread_rc = sio.background_task(update_rc_command, args = (board, last_rc))
+    sio.emit("ready", data={}, namespace = "/drone")
+
+@sio.on("set_rc", namespace="/drone")
+def set_rc(sid, data):
+    rcIn = {"yaw":data["yaw"], "pitch":data["pitch"], "roll":data["roll"], "throttle" : data["throttle"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
 @sio.on("set_direction", namespace = "/drone")
-def set_speed(sid, data):
+def set_dir(sid, data):
+    rcIn = {"yaw":data["yaw"], "pitch":data["pitch"], "roll":data["roll"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
+
+@sio.on("set_yaw", namespace="/drone")
+def set_yaw(sid, data):
+    rcIn = {"yaw":data["yaw"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
+
+@sio.on("set_pitch", namespace="/drone")
+def set_pitch(sid, data):
+    rcIn = {"pitch":data["pitch"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
+
+@sio.on("set_roll", namespace="/drone")
+def set_roll(sid, data):
+    rcIn = {"roll":data["roll"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
+
+@sio.on("set_throttle", namespace="/drone")
+def set_throttle(sid, data):
+    rcIn = {"throttle":data["throttle"]}
+    last_rc = {**last_rc, ** rcIn}
+    sendRc(last_rc)
+
+@sio.on("status", namespace="/drone")
+def get_status(sid,data):
+    pass
 
 ####################################################
 # Camera stuff
@@ -179,8 +149,6 @@ def m_(sid, data):
     if camera_handle is not None:
         camera_handle.join() # if this doesn't work, we're f*cked
         sio.emit("stopped", room=sid)
-
-
 
 if __name__ == '__main__':
 

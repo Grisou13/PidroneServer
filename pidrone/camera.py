@@ -1,11 +1,3 @@
-class CameraManager(Manager):
-    """docstring for CameraManager."""
-    def __init__(self, arg):
-        super(CameraManager, self).__init__()
-        self.arg = arg
-    def start():
-        pass
-
 import io
 import picamera
 import logging
@@ -86,7 +78,7 @@ class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
     daemon_threads = True
 
 
-def run():
+def start_camera_server():
     with picamera.PiCamera(resolution='640x480', framerate=24) as camera:
         output = StreamingOutput()
         camera.start_recording(output, format='mjpeg')

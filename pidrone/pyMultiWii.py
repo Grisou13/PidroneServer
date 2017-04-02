@@ -65,6 +65,8 @@ class MultiWii:
         self.attitude = {'angx':0,'angy':0,'heading':0,'elapsed':0,'timestamp':0}
         self.altitude = {'estalt':0,'vario':0,'elapsed':0,'timestamp':0}
         self.message = {'angx':0,'angy':0,'heading':0,'roll':0,'pitch':0,'yaw':0,'throttle':0,'elapsed':0,'timestamp':0}
+        self.misc = {"min_throttle":0,"max_throttle":0}
+        self.ident = {"version":0,"type":0,"msp_version":0}
         self.temp = ();
         self.temp2 = ();
         self.elapsed = 0
@@ -241,6 +243,15 @@ class MultiWii:
                 self.motor['elapsed']="%0.3f" % (elapsed,)
                 self.motor['timestamp']="%0.2f" % (time.time(),)
                 return self.motor
+            elif cmd == MultiWii.MISC:
+                self.misc["min_throttle"] =float(temp[1])
+                self.misc["max_throttle"] = float(temp[2])
+                return self.misc
+            elif cmd == MultiWii.IDENT:
+                self.ident["version"] = float(temp[0])
+                self.ident["type"] = float(temp[1])
+                self.ident["msp_version"] = float(temp[2])
+                return self.ident
             else:
                 return "No return error!"
         except Exception as error:
