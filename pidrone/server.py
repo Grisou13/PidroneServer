@@ -1,6 +1,7 @@
 #socketio imports
 import socketio
 import eventlet
+eventlet.monkey_patch()
 import eventlet.wsgi
 from flask import Flask, render_template
 from pyMultuiWii import MultiWii
@@ -13,13 +14,6 @@ from multiprocessing import Process, Manager
 from multiprocessing.managers import BaseManager
 import time
 from .helpers import *
-#from flight_controller import FlightController
-# register classes for sharing between processes
-# toherwise stuff may go south...
-# BaseManager.register('SocketioServer', socketio.Server)
-# BaseManager.register("MultiWii", MultiWii)
-# manager = BaseManager()
-# manager.start()
 
 sio = manager.SocketioServer()
 board = manager.MultiWii("/dev/ttyUSB0")
@@ -45,12 +39,12 @@ last_rc = board.rcChannels
 # Background processes
 # theses will be launched when the "start" command is emitted
 #################################
-def update_drone_info(board):
+def update_drone_info():
     while True:
         sio.emit("info", data = board.getData(board.ATTITUDE), namespace="/drone")
         sio.sleep(.5)
 
-def update_rc_command(board, last_rc):
+def update_rc_command():
     while True:
         sendRc(last_rc)
         sio.emit("rc_raw_data", data = board.rcChannels, namespace="/drone")
@@ -89,8 +83,8 @@ def m_(*a, **kw):
 def m_(*arg,**kwars):
     board.arm()
     time.sleep(2)
-    thread = sio.start_background_task(update_drone_info, args = (board))
-    thread_rc = sio.background_task(update_rc_command, args = (board, last_rc))
+    thread = sio.start_background_task(update_drone_info, args = ())
+    thread_rc = sio.background_task(update_rc_command, args = (last_rc))
     sio.emit("ready", data={}, namespace = "/drone")
 
 @sio.on("set_rc", namespace="/drone")
@@ -98,6 +92,7 @@ def set_rc(sid, data):
     rcIn = {"yaw":data["yaw"], "pitch":data["pitch"], "roll":data["roll"], "throttle" : data["throttle"]}
     last_rc = {**last_rc, ** rcIn}
     sendRc(last_rc)
+
 @sio.on("set_direction", namespace = "/drone")
 def set_dir(sid, data):
     rcIn = {"yaw":data["yaw"], "pitch":data["pitch"], "roll":data["roll"]}

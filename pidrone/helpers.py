@@ -35,10 +35,14 @@ def remap( x, oMin, oMax, nMin, nMax ):
 def toRawRc(d):
     data = []
     #TODO map with minthrottle, maxthrottle value and nothing hard codded
-    data[0] = remap(d["roll"],0,100,1000,2000)
-    data[1] = remap(d["pitch"],0,100,1000,2000)
-    data[2] = remap(d["yaw"],0,100,1000,2000)
-    data[3] = remap(d["throttle"],0,100,1100,2000)
+    # data[0] = remap(d["roll"],0,100,1000,2000)
+    # data[1] = remap(d["pitch"],0,100,1000,2000)
+    # data[2] = remap(d["yaw"],0,100,1000,2000)
+    # data[3] = remap(d["throttle"],0,100,1100,2000)
+    data[0] = d["roll"]
+    data[1] = d["pitch"]
+    data[2] = d["yaw"]
+    data[3] = d["throttle"]
     data[4] = 1000
     data[5] = 1040
     data[6] = 1000
@@ -47,7 +51,7 @@ def toRawRc(d):
 
 def sendRc(in_):
     try:
-        board.sendCMDreceiveATT(16, board.SET_RAW_RC, toRawRc(in_))
+        board.sendCMD(16, board.SET_RAW_RC, toRawRc(in_))
     except Exception as e:
         print(e)
     return board.getData(board.RC)
